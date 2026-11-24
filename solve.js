@@ -736,41 +736,68 @@ function renderNodes(nodes, sc, ctx, depth) {
   return out;
 }
 
-/** The JavaScript source of `nodes` rendered into `o`, for compileTemplate. */
+/** The JavaScript source of one text node rendered into `o`. */
+function emitText(n, parts) {
+  parts.push(`o+=${JSON.stringify(n.text)};`);
+}
+
+/** The JavaScript source of one {{ }} node rendered into `o`. */
+function emitVar(n, parts) {
+  parts.push(`o+=E(T(L(sc,${JSON.stringify(n.path)})));`);
+}
+
+/** The JavaScript source of one {{{ }}} node rendered into `o`. */
+function emitRaw(n, parts) {
+  parts.push(`o+=T(L(sc,${JSON.stringify(n.path)}));`);
+}
+
+/** The JavaScript source of one {% if %} node rendered into `o`. */
+function emitIf(n, parts) {
+  const cond = n.not ? `!TR(L(sc,${JSON.stringify(n.path)}))` : `TR(L(sc,${JSON.stringify(n.path)}))`;
+  parts.push(`if(${cond}){`);
+  emitNodes(n.then, parts);
+  parts.push('}');
+  if (n.else !== null) {
+    parts.push('else{');
+    emitNodes(n.else, parts);
+    parts.push('}');
+  }
+}
+
+/** The JavaScript source of one {% for %} node rendered into `o`. */
+function emitFor(n, parts) {
+  parts.push(`{let xs=L(sc,${JSON.stringify(n.path)});if(Array.isArray(xs)){let v={};let lp={index:0,first:false,last:false,length:xs.length};v.loop=lp;sc.push(v);for(let k=0;k<xs.length;k++){v[${JSON.stringify(n.name)}]=xs[k];lp.index=k+1;lp.first=k===0;lp.last=k===xs.length-1;`);
+  emitNodes(n.body, parts);
+  parts.push('}sc.pop();}}');
+}
+
+/** The JavaScript source of one {% include %} node rendered into `o`. */
+function emitInclude(n, parts) {
+  parts.push(`{let t=ctx.templates.get(${JSON.stringify(n.name)});if(t!==undefined&&depth<${INCLUDE_DEPTH})o+=typeof t==='function'?t(sc,ctx,depth+1,L,T,E,TR):renderNodes(t,sc,ctx,depth+1);}`);
+}
+
+/** The JavaScript source of `nodes` rendered into `o`, for compileTemplate: one named emitter per node kind. */
 function emitNodes(nodes, parts) {
   for (const n of nodes) {
     switch (n.kind) {
       case 'text':
-        parts.push(`o+=${JSON.stringify(n.text)};`);
+        emitText(n, parts);
         break;
       case 'var':
-        parts.push(`o+=E(T(L(sc,${JSON.stringify(n.path)})));`);
+        emitVar(n, parts);
         break;
       case 'raw':
-        parts.push(`o+=T(L(sc,${JSON.stringify(n.path)}));`);
+        emitRaw(n, parts);
         break;
-      case 'if': {
-        const cond = n.not ? `!TR(L(sc,${JSON.stringify(n.path)}))` : `TR(L(sc,${JSON.stringify(n.path)}))`;
-        parts.push(`if(${cond}){`);
-        emitNodes(n.then, parts);
-        parts.push('}');
-        if (n.else !== null) {
-          parts.push('else{');
-          emitNodes(n.else, parts);
-          parts.push('}');
-        }
+      case 'if':
+        emitIf(n, parts);
         break;
-      }
-      case 'for': {
-        parts.push(`{let xs=L(sc,${JSON.stringify(n.path)});if(Array.isArray(xs)){let v={};let lp={index:0,first:false,last:false,length:xs.length};v.loop=lp;sc.push(v);for(let k=0;k<xs.length;k++){v[${JSON.stringify(n.name)}]=xs[k];lp.index=k+1;lp.first=k===0;lp.last=k===xs.length-1;`);
-        emitNodes(n.body, parts);
-        parts.push('}sc.pop();}}');
+      case 'for':
+        emitFor(n, parts);
         break;
-      }
-      case 'include': {
-        parts.push(`{let t=ctx.templates.get(${JSON.stringify(n.name)});if(t!==undefined&&depth<${INCLUDE_DEPTH})o+=typeof t==='function'?t(sc,ctx,depth+1,L,T,E,TR):renderNodes(t,sc,ctx,depth+1);}`);
+      case 'include':
+        emitInclude(n, parts);
         break;
-      }
     }
   }
 }
